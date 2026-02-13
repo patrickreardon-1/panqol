@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Pancreatic Cancer QoL Tracker (QLQ-C30-style + PAN26-style)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 20px;
+      line-height: 1.4;
+    }
+    h1, h2, h3 {
+      margin-top: 1.2em;
+    }
+    .section {
+      border: 1px solid #ccc;
+      padding: 15px;
+      margin-bottom: 20px;
+      border-radius: 6px;
+    }
+    .question {
+      margin: 8px 0;
+    }
+    label {
+      display: block;
+      margin-bottom: 4px;
+    }
+    .options span {
+      margin-right: 10px;
+    }
+    .date-input {
+      margin-bottom: 10px;
+    }
+    .btn {
+      padding: 8px 14px;
+      border-radius: 4px;
+      border: none;
+      background-color: #0066cc;
+      color: white;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+    .btn-secondary {
+      background-color: #555;
+    }
+    .btn:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+    .scores {
+      margin-top: 10px;
+      font-size: 0.95rem;
+    }
+    .scores span {
+      display: block;
+      margin-bottom: 4px;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 10px;
+      font-size: 0.85rem;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 4px 6px;
+      text-align: center;
+    }
+    th {
+      background-color: #f5f5f5;
+    }
+    canvas {
+      max-width: 100%;
+      height: 300px;
+    }
+    .note {
+      font-size: 0.8rem;
+      color: #555;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <h1>Pancreatic Cancer Quality of Life Tracker</h1>
+  <p class="note">
+    This tool uses cancer-related quality of life questions with a structure similar to EORTC QLQ‑C30 and PAN26, but with original wording. It lets you save assessments, view scores, and see trends over time.
+  </p>
+
+  <!-- 1. Date -->
+  <div class="section">
+    <h2>1. Assessment date</h2>
+    <div class="date-input">
+      <label for="assessmentDate">Date of questionnaire:</label>
+      <input type="date" id="assessmentDate">
+    </div>
+    <button class="btn" onclick="setToday()">Use today</button>
+  </div>
+
+  <!-- 2. C30-style -->
+  <div class="section">
+    <h2>2. Core QoL questions (C30-style)</h2>
+    <p class="note">
+      Unless stated otherwise: 1 = Not at all, 2 = A little, 3 = Quite a bit, 4 = Very much.
+      Global items use a 1–7 scale (1 = Very poor, 7 = Excellent).
+    </p>
+    <div id="qlqC30Questions"></div>
+  </div>
+
+  <!-- 3. PAN26-style -->
+  <div class="section">
+    <h2>3. Pancreas-specific questions (PAN26-style)</h2>
+    <p class="note">
+      Responses: 1 = Not at all, 2 = A little, 3 = Quite a bit, 4 = Very much.
+    </p>
+    <div id="qlqPAN26Questions"></div>
+  </div>
+
+  <!-- 4. Scores and trends -->
+  <div class="section">
+    <h2>4. Save, scores and trend</h2>
+    <button class="btn" onclick="calculateAndSave()">Calculate scores &amp; save this assessment</button>
+    <button class="btn btn-secondary" onclick="clearAllData()">Clear all saved data</button>
+
+    <div class="scores" id="currentScores"></div>
+
+    <h3>Saved assessments</h3>
+    <div class="note">
+      Stored locally in your browser. Clearing site data will erase them.
+    </div>
+    <table id="assessmentsTable">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Global health (0–100)</th>
+          <th>Summary QoL (0–100)</th>
+          <th>Pancreas QoL (0–100, higher = better)</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <h3>Trend over time</h3>
+    <canvas id="trendChart"></canvas>
+  </div>
+
+  <script>
+    /*********** 1. Question definitions (EORTC-adjacent) ***********/
+
+    const qlqC30Items = [
+      // Physical functioning–like
+      { id: "C1",  text: "In the past week, did you have difficulty carrying out vigorous activities such as climbing several flights of stairs or carrying heavy bags?" },
+      { id: "C2",  text: "In the past week, did you find it hard to walk a long distance, such as several city blocks?" },
+      { id: "C3",  text: "In the past week, did you have trouble walking short distances, such as moving around your home or ward?" },
+      { id: "C4",  text: "In the past week, did you need to lie down or sit for long periods during the day because of tiredness or weakness?" },
+      { id: "C5",  text: "In the past week, did you need someone else’s help with personal care, such as washing, dressing, or using the toilet?" },
+
+      // Role functioning–like
+      { id: "C6",  text: "In the past week, did your health limit your ability to do your usual work, studies, or household tasks?" },
+      { id: "C7",  text: "In the past week, did your health limit your ability to enjoy hobbies, social activities, or leisure time?" },
+
+      // Symptoms
+      { id: "C8",  text: "In the past week, did you feel short of breath while resting or with mild activity?" },
+      { id: "C9",  text: "In the past week, did you experience pain that interfered with your activities or movement?" },
+      { id: "C10", text: "In the past week, did you feel that you needed to rest more than usual?" },
+      { id: "C11", text: "In the past week, did you have difficulty falling asleep or staying asleep?" },
+      { id: "C12", text: "In the past week, did you feel generally weak or lacking in physical strength?" },
+      { id: "C13", text: "In the past week, did you have a reduced appetite or feel less interested in food?" },
+      { id: "C14", text: "In the past week, did you feel nauseated or queasy?" },
+      { id: "C15", text: "In the past week, did you vomit at any time?" },
+
+      { id: "C16", text: "In the past week, were you bothered by constipation or infrequent bowel movements?" },
+      { id: "C17", text: "In the past week, were you bothered by loose stools or diarrhoea?" },
+      { id: "C18", text: "In the past week, did you feel tired or exhausted, even after resting?" },
+
+      // Cognitive & emotional
+      { id: "C19", text: "In the past week, did you have trouble concentrating on things like reading, conversations, or television?" },
+      { id: "C20", text: "In the past week, did you feel tense, nervous, or on edge?" },
+      { id: "C21", text: "In the past week, did you spend a lot of time worrying about your illness or treatment?" },
+      { id: "C22", text: "In the past week, did you feel easily annoyed or irritable?" },
+      { id: "C23", text: "In the past week, did you feel sad, low in mood, or depressed?" },
+      { id: "C24", text: "In the past week, did you find it hard to remember things such as appointments or what people had told you?" },
+
+      // Social & financial
+      { id: "C25", text: "In the past week, did your illness or its treatment interfere with your family life or close relationships?" },
+      { id: "C26", text: "In the past week, did your illness or its treatment interfere with your social life or contact with friends?" },
+      { id: "C27", text: "In the past week, did your physical condition or treatment cause financial strain for you or your household?" },
+
+      // Global items – 7-point
+      { id: "C28", text: "Overall, how would you rate your general health during the past week?", scale7: true },
+      { id: "C29", text: "Overall, how would you rate your quality of life during the past week?", scale7: true },
+      { id: "C30", text: "Overall, how satisfied have you been with the support you receive from your health care team?", scale7: true }
+    ];
+
+    const qlqPAN26Items = [
+      // Pain / surgery
+      { id: "P1",  text: "In the past week, did you have pain in your upper abdomen?" },
+      { id: "P2",  text: "In the past week, did you have pain in your back that you felt was related to your pancreas or surgery?" },
+      { id: "P3",  text: "In the past week, did you have discomfort or pain around your surgical wound or scar?" },
+      { id: "P4",  text: "In the past week, did movement or changes in position make your abdominal area painful or uncomfortable?" },
+
+      // Digestive / exocrine
+      { id: "P5",  text: "In the past week, did you feel bloated or uncomfortably full after small meals?" },
+      { id: "P6",  text: "In the past week, did you feel that your digestion was poor, for example greasy stools or food not sitting well?" },
+      { id: "P7",  text: "In the past week, were you troubled by wind or excessive gas?" },
+      { id: "P8",  text: "In the past week, did you notice changes in your bowel habit, such as more frequent or looser stools than usual?" },
+      { id: "P9",  text: "In the past week, did you feel sick or nauseated because of your pancreas or its treatment?" },
+      { id: "P10", text: "In the past week, did you vomit because of your illness or its treatment?" },
+      { id: "P11", text: "In the past week, did you avoid certain foods because they were hard to digest or made you feel unwell?" },
+      { id: "P12", text: "In the past week, did you feel that you had lost weight or were worried about losing too much weight?" },
+
+      // Biliary / skin / fatigue
+      { id: "P13", text: "In the past week, did you notice yellowing of your eyes or skin, or dark-coloured urine?" },
+      { id: "P14", text: "In the past week, did you experience itchy skin or general itchiness?" },
+      { id: "P15", text: "In the past week, did you feel weak or low in energy because of your pancreas condition or treatment?" },
+
+      // Emotional & information
+      { id: "P16", text: "In the past week, did you feel anxious about your disease coming back or getting worse?" },
+      { id: "P17", text: "In the past week, did you feel low in mood or discouraged because of your pancreatic disease?" },
+      { id: "P18", text: "In the past week, did your illness or treatment make it difficult to take part in social activities outside your home?" },
+      { id: "P19", text: "In the past week, did your illness or treatment interfere with your work, studies, or usual daily responsibilities?" },
+      { id: "P20", text: "In the past week, did unpredictable symptoms make it hard for you to plan ahead?" },
+      { id: "P21", text: "In the past week, did you feel you received clear and understandable information about your disease and treatment?" },
+      { id: "P22", text: "In the past week, did you feel that your care was well coordinated between different doctors or services?" },
+
+      // Sexuality / body image / future
+      { id: "P23", text: "In the past week, did your illness or treatment reduce your interest in sexual activity?" },
+      { id: "P24", text: "In the past week, did pain, fatigue, or other symptoms interfere with your sexual activity when you wished to be sexually active?" },
+      { id: "P25", text: "In the past week, did you worry about your future health or survival because of your pancreas disease?" },
+      { id: "P26", text: "In the past week, did you feel self-conscious about your body or surgical scars when looking at yourself or when with others?" }
+    ];
+
+    /*********** 2. Render questions ***********/
+
+    function createLikertOptions(name, max, labelsText) {
+      const container = document.createElement("div");
+      container.className = "options";
+      for (let i = 1; i <= max; i++) {
+        const span = document.createElement("span");
+        const input = document.createElement("input");
+        input.type = "radio";
+        input.name = name;
+        input.value = i;
+        input.id = name + "_" + i;
+
+        const label = document.createElement("label");
+        label.setAttribute("for", input.id);
+        label.style.display = "inline";
+        label.style.marginRight = "6px";
+        label.textContent = i;
+
+        span.appendChild(input);
+        span.appendChild(label);
+        container.appendChild(span);
+      }
+      if (labelsText) {
+        const l = document.createElement("div");
+        l.className = "note";
+        l.textContent = labelsText;
+        container.appendChild(l);
+      }
+      return container;
+    }
+
+    function renderQuestions() {
+      const c30Div = document.getElementById("qlqC30Questions");
+      qlqC30Items.forEach(item => {
+        const qDiv = document.createElement("div");
+        qDiv.className = "question";
+        const lab = document.createElement("label");
+        lab.textContent = item.id + ". " + item.text;
+        qDiv.appendChild(lab);
+        if (item.scale7) {
+          qDiv.appendChild(createLikertOptions(item.id, 7, "1 = Very poor, 7 = Excellent"));
+        } else {
+          qDiv.appendChild(createLikertOptions(item.id, 4, "1 = Not at all, 4 = Very much"));
+        }
+        c30Div.appendChild(qDiv);
+      });
+
+      const panDiv = document.getElementById("qlqPAN26Questions");
+      qlqPAN26Items.forEach(item => {
+        const qDiv = document.createElement("div");
+        qDiv.className = "question";
+        const lab = document.createElement("label");
+        lab.textContent = item.id + ". " + item.text;
+        qDiv.appendChild(lab);
+        qDiv.appendChild(createLikertOptions(item.id, 4, "1 = Not at all, 4 = Very much"));
+        panDiv.appendChild(qDiv);
+      });
+    }
+
+    /*********** 3. Scoring helpers ***********/
+
+    function getResponse(id) {
+      const nodes = document.getElementsByName(id);
+      for (let i = 0; i < nodes.length; i++) {
+        if (nodes[i].checked) return parseInt(nodes[i].value, 10);
+      }
+      return null;
+    }
+
+    function transformTo0100(raw, range) {
+      if (raw == null) return null;
+      return ((raw - 1) / range) * 100;
+    }
+
+    function scoreQLQC30() {
+      const gh1 = getResponse("C28");
+      const gh2 = getResponse("C29");
+      let ghScore = null;
+      if (gh1 != null && gh2 != null) {
+        const rs = (gh1 + gh2) / 2.0;
+        ghScore = transformTo0100(rs, 6);
+      }
+
+      let transformed = {};
+      qlqC30Items.forEach(item => {
+        const val = getResponse(item.id);
+        if (val == null) {
+          transformed[item.id] = null;
+        } else if (item.scale7) {
+          transformed[item.id] = transformTo0100(val, 6);
+        } else {
+          transformed[item.id] = transformTo0100(val, 3);
+        }
+      });
+
+      const symptomItems = ["C8","C9","C10","C11","C12","C13","C14","C15","C16","C17","C18","C19","C20","C21","C22","C23","C24","C27"];
+
+      let sum = 0;
+      let count = 0;
+      for (let i = 1; i <= 27; i++) {
+        const key = "C" + i;
+        if (key === "C27") continue;
+        let v = transformed[key];
+        if (v == null) continue;
+        if (symptomItems.includes(key)) {
+          v = 100 - v;
+        }
+        sum += v;
+        count += 1;
+      }
+      const summary = count > 0 ? (sum / count) : null;
+
+      return { globalHealth: ghScore, summaryScore: summary };
+    }
+
+    function scorePAN26() {
+      let sum = 0;
+      let count = 0;
+      qlqPAN26Items.forEach(item => {
+        const val = getResponse(item.id);
+        if (val == null) return;
+        let t = transformTo0100(val, 3);
+        t = 100 - t; // higher = better
+        sum += t;
+        count += 1;
+      });
+      return count > 0 ? (sum / count) : null;
+    }
+
+    /*********** 4. Storage ***********/
+
+    const STORAGE_KEY = "panqol_assessments_v1";
+
+    function loadAssessments() {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return [];
+      try { return JSON.parse(raw); } catch { return []; }
+    }
+
+    function saveAssessments(list) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+    }
+
+    function calculateAndSave() {
+      const dateInput = document.getElementById("assessmentDate").value;
+      if (!dateInput) {
+        alert("Please select a date for this assessment.");
+        return;
+      }
+
+      const c30 = scoreQLQC30();
+      const pan = scorePAN26();
+
+      if (c30.globalHealth == null && c30.summaryScore == null && pan == null) {
+        alert("Please answer at least some questions before saving.");
+        return;
+      }
+
+      const record = {
+        date: dateInput,
+        globalHealth: c30.globalHealth != null ? parseFloat(c30.globalHealth.toFixed(1)) : null,
+        summaryScore: c30.summaryScore != null ? parseFloat(c30.summaryScore.toFixed(1)) : null,
+        panOverall: pan != null ? parseFloat(pan.toFixed(1)) : null
+      };
+
+      const list = loadAssessments();
+      const idx = list.findIndex(r => r.date === record.date);
+      if (idx >= 0) list[idx] = record; else list.push(record);
+      list.sort((a,b) => (a.date > b.date ? 1 : -1));
+      saveAssessments(list);
+
+      showCurrentScores(record);
+      renderAssessmentsTable();
+      renderTrendChart();
+    }
+
+    function clearAllData() {
+      if (confirm("This will delete all saved assessments from this browser. Continue?")) {
+        localStorage.removeItem(STORAGE_KEY);
+        renderAssessmentsTable();
+        renderTrendChart();
+        document.getElementById("currentScores").innerHTML = "";
+      }
+    }
+
+    function showCurrentScores(record) {
+      const div = document.getElementById("currentScores");
+      let html = "<h3>Current assessment scores</h3>";
+      html += "<span><strong>Date:</strong> " + record.date + "</span>";
+      if (record.globalHealth != null)
+        html += "<span>Global health: " + record.globalHealth + " / 100</span>";
+      if (record.summaryScore != null)
+        html += "<span>Summary QoL score: " + record.summaryScore + " / 100</span>";
+      if (record.panOverall != null)
+        html += "<span>Pancreas-specific QoL (higher = better): " + record.panOverall + " / 100</span>";
+      html += "<p class='note'>Higher scores indicate better overall quality of life.</p>";
+      div.innerHTML = html;
+    }
+
+    function renderAssessmentsTable() {
+      const list = loadAssessments();
+      const tbody = document.querySelector("#assessmentsTable tbody");
+      tbody.innerHTML = "";
+      list.forEach(rec => {
+        const tr = document.createElement("tr");
+        const tdDate = document.createElement("td");
+        tdDate.textContent = rec.date;
+        const tdGH = document.createElement("td");
+        tdGH.textContent = rec.globalHealth != null ? rec.globalHealth : "-";
+        const tdSummary = document.createElement("td");
+        tdSummary.textContent = rec.summaryScore != null ? rec.summaryScore : "-";
+        const tdPan = document.createElement("td");
+        tdPan.textContent = rec.panOverall != null ? rec.panOverall : "-";
+        tr.appendChild(tdDate);
+        tr.appendChild(tdGH);
+        tr.appendChild(tdSummary);
+        tr.appendChild(tdPan);
+        tbody.appendChild(tr);
+      });
+    }
+
+    /*********** 5. Trend chart ***********/
+
+    let chartInstance = null;
+
+    function renderTrendChart() {
+      const list = loadAssessments();
+      const ctx = document.getElementById("trendChart").getContext("2d");
+      const labels = list.map(r => r.date);
+      const gh = list.map(r => r.globalHealth);
+      const summary = list.map(r => r.summaryScore);
+      const pan = list.map(r => r.panOverall);
+
+      if (chartInstance) {
+        chartInstance.destroy();
+      }
+
+      chartInstance = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: "Global health",
+              data: gh,
+              borderColor: "#007bff",
+              backgroundColor: "rgba(0,123,255,0.15)",
+              tension: 0.2,
+              spanGaps: true
+            },
+            {
+              label: "Summary QoL",
+              data: summary,
+              borderColor: "#28a745",
+              backgroundColor: "rgba(40,167,69,0.15)",
+              tension: 0.2,
+              spanGaps: true
+            },
+            {
+              label: "Pancreas QoL",
+              data: pan,
+              borderColor: "#ff8800",
+              backgroundColor: "rgba(255,136,0,0.15)",
+              tension: 0.2,
+              spanGaps: true
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            y: {
+              beginAtZero: true,
+              max: 100,
+              title: { display: true, text: "Score (0–100)" }
+            },
+            x: {
+              title: { display: true, text: "Date" }
+            }
+          },
+          plugins: {
+            legend: { position: "bottom" },
+            tooltip: { mode: "index", intersect: false }
+          }
+        }
+      });
+    }
+
+    /*********** 6. Utility ***********/
+
+    function setToday() {
+      const today = new Date().toISOString().slice(0,10);
+      document.getElementById("assessmentDate").value = today;
+    }
+
+    window.onload = function() {
+      renderQuestions();
+      renderAssessmentsTable();
+      renderTrendChart();
+      setToday();
+    };
+  </script>
+</body>
+</html>
